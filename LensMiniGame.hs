@@ -18,9 +18,11 @@ import Debug.Trace
   minigame
     done - shoot bullets with limited lifetime
     done - respawn player
-    pick up health, weapon and ammo powerups
-    touch lava that cause damage
-    respawn items
+    done - pick up health, weapon and ammo powerups
+    done - respawn items
+    done - touch lava that cause damage once per second since the first touch
+    don't pickup items when the inventory is full
+    control player's acceleration instead of position, also add friction
 
   goals:
     rule based
@@ -42,12 +44,13 @@ _y = _2
 
 data Player
   = Player
-  { _pPosition  :: Vec2
-  , _pAngle     :: Float
-  , _pHealth    :: Int
-  , _pAmmo      :: Int
-  , _pArmor     :: Int
-  , _pShootTime :: Float
+  { _pPosition    :: Vec2
+  , _pAngle       :: Float
+  , _pHealth      :: Int
+  , _pAmmo        :: Int
+  , _pArmor       :: Int
+  , _pShootTime   :: Float
+  , _pDamageTimer :: Maybe Float
   } deriving Show
 
 data Bullet
@@ -75,10 +78,22 @@ data Armor
   , _rQuantity   :: Int
   } deriving Show
 
+data Health
+  = Health
+  { _hPosition   :: Vec2
+  , _hQuantity   :: Int
+  } deriving Show
+
 data Spawn
   = Spawn
   { _sSpawnTime :: Float
   , _sEntity    :: Entity
+  } deriving Show
+
+data Lava
+  = Lava
+  { _lPosition :: Vec2
+  , _lDamage   :: Int
   } deriving Show
 
 data Entity
@@ -87,10 +102,12 @@ data Entity
   | EWeapon Weapon
   | EAmmo   Ammo
   | EArmor  Armor
+  | EHealth Health
+  | ELava   Lava
   | PSpawn  Spawn
   deriving Show
 
-concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn]
+concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava]
 
 type Time = Float
 type DTime = Float
@@ -106,6 +123,8 @@ collide o r skipI ents = mapMaybe dispatch ents where
         EWeapon a -> f e (a^.wPosition) 10
         EAmmo a   -> f e (a^.aPosition) 8
         EArmor a  -> f e (a^.rPosition) 10
+        EHealth a -> f e (a^.hPosition) 10
+        ELava a   -> f e (a^.lPosition) 50
         _ -> Nothing
 
 updateEntities :: Input -> [Entity] -> [Entity]
@@ -119,18 +138,20 @@ updateEntities input@Input{..} ents = do
     EWeapon a -> go EWeapon $ weapon time dtime (collide (a^.wPosition) 10 i ients) a
     EAmmo   a -> go EAmmo $ ammo time dtime (collide (a^.aPosition) 8 i ients) a
     EArmor  a -> go EArmor $ armor time dtime (collide (a^.rPosition) 10 i ients) a
+    EHealth a -> go EHealth $ health time dtime (collide (a^.hPosition) 10 i ients) a
     PSpawn  a -> go PSpawn $ spawn time dtime a
     a -> [a]
 
 myEvalRWS m a = evalRWS m a a
 
 initialPlayer = Player
-  { _pPosition  = (0,0)
-  , _pAngle     = 0
-  , _pHealth    = 100
-  , _pAmmo      = 100
-  , _pArmor     = 0
-  , _pShootTime = 0
+  { _pPosition    = (0,0)
+  , _pAngle       = 0
+  , _pHealth      = 100
+  , _pAmmo        = 100
+  , _pArmor       = 0
+  , _pShootTime   = 0
+  , _pDamageTimer = Nothing
   }
 
 spawn :: Time -> DTime -> Spawn -> (Maybe Spawn,[Entity])
@@ -153,18 +174,26 @@ player input@Input{..} c = myEvalRWS $ do
   shootTime <- view pShootTime
   when (shoot && shootTime < time) $ do
     pos <- use pPosition
-    tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 150 direction) 1 2]
+    tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
     pShootTime .= time + 0.1
 
-  -- on collision:
-    -- bullet --> dec armor or dec health
-    -- weapon --> inc ammo and add weapon
-    -- ammo   --> inc ammo
-    -- armor  --> inc armor
+  oncePerSec <- do
+    let triggered = not $ null [() | ELava{} <- c]
+    pDamageTimer %= (fmap (flip (-) dtime))
+    use pDamageTimer >>= \case
+      Nothing | triggered -> pDamageTimer .= Just 1 >> return True
+      Just t  | triggered -> if t > 0 then return False else do
+                              pDamageTimer .= Just (1 + snd (properFraction t))
+                              return True
+      _ -> pDamageTimer .= Nothing >> return False
+
+  -- touch actions
   forM_ c $ \case
+    EHealth a -> pHealth += a^.hQuantity
     EBullet b -> pHealth -= b^.bDamage
-    EAmmo a   -> pAmmo += a^.aQuantity
+    ELava a   -> when oncePerSec $ pHealth -= a^.lDamage -- TODO: once per second
     EArmor a  -> pArmor += a^.rQuantity
+    EAmmo a   -> pAmmo += a^.aQuantity
     EWeapon _ -> pAmmo += 10
     _ -> return ()
   -- death
@@ -197,6 +226,9 @@ ammo = respawnOnTouch EAmmo
 
 armor :: Time -> DTime -> [Entity] -> Armor -> (Maybe Armor,[Entity])
 armor = respawnOnTouch EArmor
+
+health :: Time -> DTime -> [Entity] -> Health -> (Maybe Health,[Entity])
+health = respawnOnTouch EHealth
 
 -----
 
@@ -246,6 +278,8 @@ renderFun w = Pictures $ flip map (w^.wEntities) $ \case
   EWeapon a -> Translate x y $ Color blue $ Circle 10 where (x,y) = a^.wPosition
   EAmmo a   -> Translate x y $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
   EArmor a  -> Translate x y $ Color red $ Circle 10 where (x,y) = a^.rPosition
+  EHealth a -> Translate x y $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
+  ELava a   -> Translate x y $ Color orange $ Circle 50 where (x,y) = a^.lPosition
 
   _ -> Blank
 
@@ -256,6 +290,8 @@ emptyWorld = World
   , EWeapon (Weapon (10,20))
   , EAmmo   (Ammo (100,100) 20)
   , EArmor  (Armor (200,100) 30)
+  , EHealth (Health (100, 200) 50)
+  , ELava   (Lava (-200,-100) 10)
   ] emptyInput
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
