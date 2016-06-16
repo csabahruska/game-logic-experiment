@@ -23,6 +23,11 @@ import Debug.Trace
     done - touch lava that cause damage once per second since the first touch
     done - control player's acceleration instead of position, also add friction
     don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
+    randomize spawn time
+    count deaths and kills
+    drop inventory on death
+    teleport
+    jump pad
 
   goals:
     rule based
@@ -45,7 +50,7 @@ _y = _2
 data Player
   = Player
   { _pPosition    :: Vec2
-  , _pVelocity    :: Vec2
+  , _pVelocity    :: Float
   , _pAngle       :: Float
   , _pHealth      :: Int
   , _pAmmo        :: Int
@@ -147,7 +152,7 @@ myEvalRWS m a = evalRWS m a a
 
 initialPlayer = Player
   { _pPosition    = (0,0)
-  , _pVelocity    = (0,0)
+  , _pVelocity    = 0
   , _pAngle       = 0
   , _pHealth      = 100
   , _pAmmo        = 100
@@ -170,14 +175,14 @@ player input@Input{..} c = myEvalRWS $ do
   pAngle += rightmove * dtime
   angle <- use pAngle
   let direction = unitVectorAtAngle $ degToRad angle
-  pVelocity += mulSV (forwardmove * dtime) direction
+  pVelocity += forwardmove * dtime
   -- friction
-  len <- magV <$> use pVelocity
+  len <- use pVelocity
   let friction = 150
-  pVelocity %= mulSV (max 0 $ (len - dtime * friction) / len)
+  pVelocity %= (*) (max 0 $ (len - dtime * friction) / len)
   -- move
   velocity <- use pVelocity
-  pPosition += mulSV dtime velocity
+  pPosition += mulSV (dtime * velocity) direction
 
   -- shoot
   shootTime <- view pShootTime
