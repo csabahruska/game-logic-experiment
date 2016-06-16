@@ -179,9 +179,9 @@ player input@Input{..} c = myEvalRWS $ do
   -- friction
   len <- use pVelocity
   let friction = 150
-  pVelocity %= (*) (max 0 $ (len - dtime * friction) / len)
+  pVelocity %= (*) (max 0 $ (len - dtime * friction * signum len) / len)
   -- move
-  pVelocity %= min 200
+  pVelocity %= max (-200) . min 200
   velocity <- use pVelocity
   pPosition += mulSV (dtime * velocity) direction
 
