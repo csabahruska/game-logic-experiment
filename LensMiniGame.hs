@@ -21,8 +21,8 @@ import Debug.Trace
     done - pick up health, weapon and ammo powerups
     done - respawn items
     done - touch lava that cause damage once per second since the first touch
-    don't pickup items when the inventory is full
-    control player's acceleration instead of position, also add friction
+    done - control player's acceleration instead of position, also add friction
+    don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
 
   goals:
     rule based
@@ -45,6 +45,7 @@ _y = _2
 data Player
   = Player
   { _pPosition    :: Vec2
+  , _pVelocity    :: Vec2
   , _pAngle       :: Float
   , _pHealth      :: Int
   , _pAmmo        :: Int
@@ -146,6 +147,7 @@ myEvalRWS m a = evalRWS m a a
 
 initialPlayer = Player
   { _pPosition    = (0,0)
+  , _pVelocity    = (0,0)
   , _pAngle       = 0
   , _pHealth      = 100
   , _pAmmo        = 100
@@ -164,11 +166,18 @@ spawn t dt = myEvalRWS $ do
 
 player :: Input -> [Entity] -> Player -> (Maybe Player,[Entity])
 player input@Input{..} c = myEvalRWS $ do
-  -- move according input
+  -- acceleration according input
   pAngle += rightmove * dtime
   angle <- use pAngle
   let direction = unitVectorAtAngle $ degToRad angle
-  pPosition += mulSV (forwardmove * dtime) direction
+  pVelocity += mulSV (forwardmove * dtime) direction
+  -- friction
+  len <- magV <$> use pVelocity
+  let friction = 150
+  pVelocity %= mulSV (max 0 $ (len - dtime * friction) / len)
+  -- move
+  velocity <- use pVelocity
+  pPosition += mulSV dtime velocity
 
   -- shoot
   shootTime <- view pShootTime
@@ -250,8 +259,8 @@ data World
 makeLenses ''World
 
 inputFun e w = w & wInput .~ i' where
-  f Down = 100
-  f Up = -100
+  f Down = 300
+  f Up = -300
 
   i@Input{..} = w^.wInput
   i' = case e of
