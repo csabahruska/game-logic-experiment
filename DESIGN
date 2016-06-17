@@ -1,0 +1,16 @@
+  goals:
+    rule based
+    compositional with reusable small components
+    intuitive and easy to use
+    simple and efficient operational semantics and implementation (should be easy to imagine the compilation/codegen)
+
+  events:
+    collision between entities and client
+
+actor is alias to entity
+
+question:
+  how to organize actor state modifier?
+    #1 keep it together and use some mechanism to allow a state change what also depends on other actors's state (transactional)
+
+    #2 scatter the rules and allow actors to modify each others
