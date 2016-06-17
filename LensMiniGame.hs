@@ -56,7 +56,7 @@ data Player
   , _pAmmo        :: Int
   , _pArmor       :: Int
   , _pShootTime   :: Float
-  , _pDamageTimer :: Maybe Float
+  , _pDamageTimer :: Float
   } deriving Show
 
 data Bullet
@@ -158,7 +158,7 @@ initialPlayer = Player
   , _pAmmo        = 100
   , _pArmor       = 0
   , _pShootTime   = 0
-  , _pDamageTimer = Nothing
+  , _pDamageTimer = 0
   }
 
 spawn :: Time -> DTime -> Spawn -> (Maybe Spawn,[Entity])
@@ -193,14 +193,10 @@ player input@Input{..} c = myEvalRWS $ do
     pShootTime .= time + 0.1
 
   oncePerSec <- do
-    let triggered = not $ null [() | ELava{} <- c]
-    pDamageTimer %= (fmap (flip (-) dtime))
-    use pDamageTimer >>= \case
-      Nothing | triggered -> pDamageTimer .= Just 1 >> return True
-      Just t  | triggered -> if t > 0 then return False else do
-                              pDamageTimer .= Just (1 + snd (properFraction t))
-                              return True
-      _ -> pDamageTimer .= Nothing >> return False
+    t <- use pDamageTimer
+    if t > time then return False else do
+      pDamageTimer .= time + 1
+      return True
 
   -- touch actions
   forM_ c $ \case
