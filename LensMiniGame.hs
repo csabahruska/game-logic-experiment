@@ -192,17 +192,19 @@ player input@Input{..} c = myEvalRWS $ do
     tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
     pShootTime .= time + 0.1
 
-  oncePerSec <- do
-    t <- use pDamageTimer
-    if t > time then return False else do
-      pDamageTimer .= time + 1
-      return True
+  let oncePerSec = do
+        t <- use pDamageTimer
+        if t > time then return False else do
+          pDamageTimer .= time + 1
+          return True
 
   -- touch actions
   forM_ c $ \case
     EHealth a -> pHealth += a^.hQuantity
     EBullet b -> pHealth -= b^.bDamage
-    ELava a   -> when oncePerSec $ pHealth -= a^.lDamage -- TODO: once per second
+    ELava a   -> do
+                  tick <- oncePerSec
+                  when tick $ pHealth -= a^.lDamage -- TODO: once per second
     EArmor a  -> pArmor += a^.rQuantity
     EAmmo a   -> pAmmo += a^.aQuantity
     EWeapon _ -> pAmmo += 10
