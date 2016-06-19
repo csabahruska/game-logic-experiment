@@ -36,6 +36,7 @@ import Debug.Trace
     drop inventory on death
     teleport
     jump pad
+    animated visual only elements (i.e. particles on collision)
 
   goals:
     rule based
@@ -184,7 +185,6 @@ updateEntities input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts w
   collect :: Writer w a -> (a,w)
   collect m = runIdentity $ runWriterT m
 
-
   step :: Entity -> CM (Maybe Entity)
   step = \case
     EPlayer a -> update EPlayer a $ stepPlayer input
@@ -268,6 +268,7 @@ stepPlayer input@Input{..} = do
     tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
     pShootTime .= time + 0.1
 
+  pHealth %= min 200
   -- death
   health <- use pHealth
   unless (health > 0) $ do
