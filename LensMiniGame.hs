@@ -197,30 +197,6 @@ updateEntities input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts w
                               (,) <$> update EPlayer p (unless c $ pHealth += a^.hQuantity) -- can: die or create new entities
                                   <*> update EHealth a (unless c $ respawn EHealth)
 
-{-
-    (EPlayer p,EHealth a) -> undefined where p' = myEvalRWS' p $ do {pHealth += a^.hQuantity; Just <$> get}
-                                             a' = myEvalRWS' a $ return Nothing
-                                             pa' = (p',a')
-    (EPlayer p,EHealth a) -> do
-                              let c = p^.pHealth >= 100
-                                  p' = unless c $ pHealth += a^.hQuantity
-                                  a' = when c respawn
-
-                              (,) <$> update EPlayer p p'
-                                  <*> update EHealth a a'
-    (EPlayer p,EHealth a) -> do
-                              (p',c) <- update EPlayer p $ do
-                                let c = p^.pHealth >= 100
-                                unless c $ pHealth += a^.hQuantity
-                                return c
-                              (p',) <$> update EHealth a $ when c respawn
-    (EPlayer p,EHealth a) -> pairBind EPlayer p pAct EHealth a hAct where
-                              pAct = do
-                                let c = p^.pHealth >= 100
-                                unless c $ pHealth += a^.hQuantity
-                                return c
-                              hAct c = when c respawn
--}
     (EPlayer p,EBullet a) -> (,) <$> update EPlayer p (pHealth -= a^.bDamage)
                                  <*> update EBullet a die
 
