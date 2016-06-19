@@ -152,8 +152,14 @@ type CM a = Writer [Entity] a
 
 die = fail "die"
 
+respawn t f = do
+  s <- get
+  tell [PSpawn $ Spawn (t + 5) (f s)]
+  die
+
 update :: (s -> Entity) -> s -> EM s a -> CM (Maybe Entity)
 update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
+
 {-
   collect collided entities
   transform entities in interaction, collect newly generated entities
@@ -170,49 +176,48 @@ updateEntities input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts w
 
   (nextEnts,newEnts) = collect $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
-          (Just e1, Just e2) -> fun True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
+          (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
           _ -> return entV
     v <- foldM go entityVector collisions
-    forM v $ \case
-      Nothing -> return Nothing
-      Just e  -> case e of
-        EPlayer a -> update EPlayer a $ player input
-        EBullet a -> update EBullet a $ bullet time dtime
-        PSpawn  a -> update PSpawn a $ spawn time dtime
-        _ -> return $ Just e
+    mapM (maybe (return Nothing) step) v
 
   collect :: Writer w a -> (a,w)
   collect m = runIdentity $ runWriterT m
 
-  respawn f = do
-    s <- get
-    tell [PSpawn $ Spawn 5 (f s)]
-    die
 
-  fun :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity)
-  fun swap = \case
+  step :: Entity -> CM (Maybe Entity)
+  step = \case
+    EPlayer a -> update EPlayer a $ stepPlayer input
+    EBullet a -> update EBullet a $ stepBullet time dtime
+    PSpawn  a -> update PSpawn a $ stepSpawn time dtime
+    e -> return $ Just e
+
+  interact :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity)
+  interact swap = \case
 
     (EPlayer p,EHealth a) -> do -- collects newly create entities also handles random seed
                               let c = p^.pHealth >= 200
                               (,) <$> update EPlayer p (unless c $ pHealth += a^.hQuantity) -- can: die or create new entities
-                                  <*> update EHealth a (unless c $ respawn EHealth)
+                                  <*> update EHealth a (unless c $ respawn time EHealth)
 
     (EPlayer p,EBullet a) -> (,) <$> update EPlayer p (pHealth -= a^.bDamage)
                                  <*> update EBullet a die
 
     (EPlayer p,EArmor a)  -> (,) <$> update EPlayer p (pArmor += a^.rQuantity)
-                                 <*> update EArmor a die
+                                 <*> update EArmor a (respawn time EArmor)
 
     (EPlayer p,EAmmo a)   -> (,) <$> update EPlayer p (pAmmo += a^.aQuantity)
-                                 <*> update EAmmo a die
+                                 <*> update EAmmo a (respawn time EAmmo)
 
     (EPlayer p,EWeapon a) -> (,) <$> update EPlayer p (pAmmo += 10)
-                                 <*> update EWeapon a die
+                                 <*> update EWeapon a (respawn time EWeapon)
 
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
+
     (EBullet a,b)         -> (,Just b) <$> update EBullet a die
-    (a,b) | swap -> fun False (b,a)
+
+    (a,b) | swap -> interact False (b,a)
           | otherwise -> return (Just a,Just b)
 
   oncePerSec = do
@@ -232,16 +237,16 @@ initialPlayer = Player
   , _pDamageTimer = 0
   }
 
-spawn :: Time -> DTime -> EM Spawn ()
-spawn t dt = do
+stepSpawn :: Time -> DTime -> EM Spawn ()
+stepSpawn t dt = do
   spawnTime <- view sSpawnTime
   unless (t < spawnTime) $ do
     ent <- view sEntity
     tell [ent]
     die
 
-player :: Input -> EM Player ()
-player input@Input{..} = do
+stepPlayer :: Input -> EM Player ()
+stepPlayer input@Input{..} = do
   -- acceleration according input
   pAngle += rightmove * dtime
   angle <- use pAngle
@@ -269,8 +274,8 @@ player input@Input{..} = do
     tell [PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer]
     die
 
-bullet :: Time -> DTime -> EM Bullet ()
-bullet t dt = do
+stepBullet :: Time -> DTime -> EM Bullet ()
+stepBullet t dt = do
   (u,v) <- use bDirection
   bPosition += (dt * u, dt * v)
   -- die on collision
