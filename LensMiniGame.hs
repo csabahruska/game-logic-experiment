@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, Rank2Types, NoMonomorphismRestriction, LambdaCase, RecordWildCards, FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell, Rank2Types, NoMonomorphismRestriction, LambdaCase, RecordWildCards, FlexibleContexts, TupleSections #-}
 import Graphics.Gloss
 import Graphics.Gloss.Interface.Pure.Game
 import Graphics.Gloss.Data.Vector
@@ -30,7 +30,7 @@ import Debug.Trace
     done - respawn items
     done - touch lava that cause damage once per second since the first touch
     done - control player's acceleration instead of position, also add friction
-    don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
+    done - don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
     randomize spawn time
     count deaths and kills
     drop inventory on death
@@ -126,23 +126,26 @@ concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spa
 type Time = Float
 type DTime = Float
 
-collide :: Vec2 -> Float -> Int -> [(Entity,Int)] -> [Entity]
-collide o r skipI ents = mapMaybe dispatch ents where
-  f e d s = if magV (o - d) < r + s then Just e else Nothing
-  dispatch (e,i)
-    | i == skipI = Nothing
-    | otherwise = case e of
-        EPlayer a -> f e (a^.pPosition) 20
-        EBullet a -> f e (a^.bPosition) 2
-        EWeapon a -> f e (a^.wPosition) 10
-        EAmmo a   -> f e (a^.aPosition) 8
-        EArmor a  -> f e (a^.rPosition) 10
-        EHealth a -> f e (a^.hPosition) 10
-        ELava a   -> f e (a^.lPosition) 50
-        _ -> Nothing
-
-collide' :: [Entity] -> [(Entity,Entity)]
-collide' _ = []
+collide :: [Entity] -> [(Int,Int)]
+collide ents = x where
+  ients = zip [0..] ents
+  x = [ (i1,i2)
+      | (i1,e1) <- ients
+      , (i2,e2) <- ients
+      , i1 < i2
+      , (p1,r1) <- maybeToList (brush e1)
+      , (p2,r2) <- maybeToList (brush e2)
+      , magV (p1 - p2) < r1 + r2
+      ]
+  brush = \case
+    EPlayer a -> Just (a^.pPosition, 20)
+    EBullet a -> Just (a^.bPosition, 2)
+    EWeapon a -> Just (a^.wPosition, 10)
+    EAmmo a   -> Just (a^.aPosition, 8)
+    EArmor a  -> Just (a^.rPosition, 10)
+    EHealth a -> Just (a^.hPosition, 10)
+    ELava a   -> Just (a^.lPosition, 50)
+    _ -> Nothing
 
 type EM s a = ReaderT s (StateT s (MaybeT (Writer [Entity]))) a
 type CM a = Writer [Entity] a
@@ -157,13 +160,13 @@ update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
   step entities, also collect generated entities
   append generated entities
 -}
-updateEntities' :: Input -> [Entity] -> [Entity]
-updateEntities' input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts where
+updateEntities :: Input -> [Entity] -> [Entity]
+updateEntities input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts where
   entityVector :: V.Vector (Maybe Entity)
   entityVector = V.fromList $ map Just ents
 
   collisions :: [(Int,Int)]
-  collisions = []
+  collisions = collide ents
 
   (nextEnts,newEnts) = collect $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
@@ -173,9 +176,9 @@ updateEntities' input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts 
     forM v $ \case
       Nothing -> return Nothing
       Just e  -> case e of
-        EPlayer a -> update EPlayer a $ player' input
-        EBullet a -> update EBullet a $ bullet' time dtime
-        PSpawn  a -> update PSpawn a $ spawn' time dtime
+        EPlayer a -> update EPlayer a $ player input
+        EBullet a -> update EBullet a $ bullet time dtime
+        PSpawn  a -> update PSpawn a $ spawn time dtime
         _ -> return $ Just e
 
   collect :: Writer w a -> (a,w)
@@ -190,9 +193,9 @@ updateEntities' input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts 
   fun swap = \case
 
     (EPlayer p,EHealth a) -> do -- collects newly create entities also handles random seed
-                              let c = p^.pHealth >= 100
+                              let c = p^.pHealth >= 200
                               (,) <$> update EPlayer p (unless c $ pHealth += a^.hQuantity) -- can: die or create new entities
-                                  <*> update EHealth a (when c $ respawn EHealth)
+                                  <*> update EHealth a (unless c $ respawn EHealth)
 
 {-
     (EPlayer p,EHealth a) -> undefined where p' = myEvalRWS' p $ do {pHealth += a^.hQuantity; Just <$> get}
@@ -232,33 +235,15 @@ updateEntities' input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts 
 
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
-
+    (EBullet a,b)         -> (,Just b) <$> update EBullet a die
     (a,b) | swap -> fun False (b,a)
-    _ -> undefined
+          | otherwise -> return (Just a,Just b)
 
   oncePerSec = do
     t <- use pDamageTimer
     if t > time then return False else do
       pDamageTimer .= time + 1
       return True
-
-updateEntities :: Input -> [Entity] -> [Entity]
-updateEntities input@Input{..} ents = do
-  let ients = zip ents [0..]
-      go _ (Nothing,x) = x
-      go c (Just a,x) = c a : x
-  flip foldMap ients $ \(e,i) -> case e of
-    EPlayer p -> go EPlayer $ player input (collide (p^.pPosition) 20 i ients) p
-    EBullet b -> go EBullet $ bullet time dtime (collide (b^.bPosition) 2 i ients) b
-    EWeapon a -> go EWeapon $ weapon time dtime (collide (a^.wPosition) 10 i ients) a
-    EAmmo   a -> go EAmmo $ ammo time dtime (collide (a^.aPosition) 8 i ients) a
-    EArmor  a -> go EArmor $ armor time dtime (collide (a^.rPosition) 10 i ients) a
-    EHealth a -> go EHealth $ health time dtime (collide (a^.hPosition) 10 i ients) a
-    PSpawn  a -> go PSpawn $ spawn time dtime a
-    a -> [a]
-
-myEvalRWS' a m = myEvalRWS m a
-myEvalRWS m a = evalRWS m a a
 
 initialPlayer = Player
   { _pPosition    = (0,0)
@@ -271,24 +256,16 @@ initialPlayer = Player
   , _pDamageTimer = 0
   }
 
-spawn :: Time -> DTime -> Spawn -> (Maybe Spawn,[Entity])
-spawn t dt = myEvalRWS $ do
-  spawnTime <- view sSpawnTime
-  if t < spawnTime then Just <$> get else do
-    ent <- view sEntity
-    tell [ent]
-    return Nothing
-
-spawn' :: Time -> DTime -> EM Spawn ()
-spawn' t dt = do
+spawn :: Time -> DTime -> EM Spawn ()
+spawn t dt = do
   spawnTime <- view sSpawnTime
   unless (t < spawnTime) $ do
     ent <- view sEntity
     tell [ent]
     die
 
-player' :: Input -> EM Player ()
-player' input@Input{..} = do
+player :: Input -> EM Player ()
+player input@Input{..} = do
   -- acceleration according input
   pAngle += rightmove * dtime
   angle <- use pAngle
@@ -316,64 +293,8 @@ player' input@Input{..} = do
     tell [PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer]
     die
 
-player :: Input -> [Entity] -> Player -> (Maybe Player,[Entity])
-player input@Input{..} c = myEvalRWS $ do
-  -- acceleration according input
-  pAngle += rightmove * dtime
-  angle <- use pAngle
-  let direction = unitVectorAtAngle $ degToRad angle
-  pVelocity += forwardmove * dtime
-  -- friction
-  len <- use pVelocity
-  let friction = 150
-  pVelocity %= (*) (max 0 $ (len - dtime * friction * signum len) / len)
-  -- move
-  pVelocity %= max (-200) . min 200
-  velocity <- use pVelocity
-  pPosition += mulSV (dtime * velocity) direction
-
-  -- shoot
-  shootTime <- view pShootTime
-  when (shoot && shootTime < time) $ do
-    pos <- use pPosition
-    tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
-    pShootTime .= time + 0.1
-
-  let oncePerSec = do
-        t <- use pDamageTimer
-        if t > time then return False else do
-          pDamageTimer .= time + 1
-          return True
-
-  -- touch actions
-  forM_ c $ \case
-    EHealth a -> pHealth += a^.hQuantity
-    EBullet b -> pHealth -= b^.bDamage
-    ELava a   -> do
-                  tick <- oncePerSec
-                  when tick $ pHealth -= a^.lDamage -- TODO: once per second
-    EArmor a  -> pArmor += a^.rQuantity
-    EAmmo a   -> pAmmo += a^.aQuantity
-    EWeapon _ -> pAmmo += 10
-    _ -> return ()
-  -- death
-  health <- use pHealth
-  if health > 0 then Just <$> get else do
-    tell [PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer]
-    return Nothing
-
-bullet :: Time -> DTime -> [Entity] -> Bullet -> (Maybe Bullet,[Entity])
-bullet t dt c = myEvalRWS $ do
-  (u,v) <- use bDirection
-  bPosition += (dt * u, dt * v)
-  -- die on collision
-  -- die on spent lifetime
-  bLifeTime -= dt
-  lifeTime <- use bLifeTime
-  if lifeTime < 0 || not (null c) then return Nothing else Just <$> get
-
-bullet' :: Time -> DTime -> EM Bullet ()
-bullet' t dt = do
+bullet :: Time -> DTime -> EM Bullet ()
+bullet t dt = do
   (u,v) <- use bDirection
   bPosition += (dt * u, dt * v)
   -- die on collision
@@ -381,24 +302,6 @@ bullet' t dt = do
   bLifeTime -= dt
   lifeTime <- use bLifeTime
   when (lifeTime < 0) die
-
-respawnOnTouch f t dt c = myEvalRWS $ do
-  if null c then Just <$> get else do
-    ent <- ask
-    tell [PSpawn $ Spawn (t + 3) (f ent)]
-    return Nothing
-
-weapon :: Time -> DTime -> [Entity] -> Weapon -> (Maybe Weapon,[Entity])
-weapon = respawnOnTouch EWeapon
-
-ammo :: Time -> DTime -> [Entity] -> Ammo -> (Maybe Ammo,[Entity])
-ammo = respawnOnTouch EAmmo
-
-armor :: Time -> DTime -> [Entity] -> Armor -> (Maybe Armor,[Entity])
-armor = respawnOnTouch EArmor
-
-health :: Time -> DTime -> [Entity] -> Health -> (Maybe Health,[Entity])
-health = respawnOnTouch EHealth
 
 -----
 
