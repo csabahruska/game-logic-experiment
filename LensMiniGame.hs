@@ -4,8 +4,16 @@ import Graphics.Gloss.Interface.Pure.Game
 import Graphics.Gloss.Data.Vector
 import Graphics.Gloss.Geometry.Angle
 
+import Data.Maybe
 import Control.Monad.State
+import Control.Monad.Writer
+import Control.Monad.Reader
+import Control.Monad.Trans.Maybe
+import Data.Functor.Identity
 import Control.Monad.RWS
+
+import Data.Vector ((!),(//))
+import qualified Data.Vector as V
 
 --import Control.Lens
 import Lens.Micro.Platform
@@ -133,6 +141,107 @@ collide o r skipI ents = mapMaybe dispatch ents where
         ELava a   -> f e (a^.lPosition) 50
         _ -> Nothing
 
+collide' :: [Entity] -> [(Entity,Entity)]
+collide' _ = []
+
+type EM s a = ReaderT s (StateT s (MaybeT (Writer [Entity]))) a
+type CM a = Writer [Entity] a
+
+die = fail "die"
+
+update :: (s -> Entity) -> s -> EM s a -> CM (Maybe Entity)
+update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
+{-
+  collect collided entities
+  transform entities in interaction, collect newly generated entities
+  step entities, also collect generated entities
+  append generated entities
+-}
+updateEntities' :: Input -> [Entity] -> [Entity]
+updateEntities' input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts where
+  entityVector :: V.Vector (Maybe Entity)
+  entityVector = V.fromList $ map Just ents
+
+  collisions :: [(Int,Int)]
+  collisions = []
+
+  (nextEnts,newEnts) = collect $ do
+    let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
+          (Just e1, Just e2) -> fun True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
+          _ -> return entV
+    v <- foldM go entityVector collisions
+    forM v $ \case
+      Nothing -> return Nothing
+      Just e  -> case e of
+        EPlayer a -> update EPlayer a $ player' input
+        EBullet a -> update EBullet a $ bullet' time dtime
+        PSpawn  a -> update PSpawn a $ spawn' time dtime
+        _ -> return $ Just e
+
+  collect :: Writer w a -> (a,w)
+  collect m = runIdentity $ runWriterT m
+
+  respawn f = do
+    s <- get
+    tell [PSpawn $ Spawn 5 (f s)]
+    die
+
+  fun :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity)
+  fun swap = \case
+
+    (EPlayer p,EHealth a) -> do -- collects newly create entities also handles random seed
+                              let c = p^.pHealth >= 100
+                              (,) <$> update EPlayer p (unless c $ pHealth += a^.hQuantity) -- can: die or create new entities
+                                  <*> update EHealth a (when c $ respawn EHealth)
+
+{-
+    (EPlayer p,EHealth a) -> undefined where p' = myEvalRWS' p $ do {pHealth += a^.hQuantity; Just <$> get}
+                                             a' = myEvalRWS' a $ return Nothing
+                                             pa' = (p',a')
+    (EPlayer p,EHealth a) -> do
+                              let c = p^.pHealth >= 100
+                                  p' = unless c $ pHealth += a^.hQuantity
+                                  a' = when c respawn
+
+                              (,) <$> update EPlayer p p'
+                                  <*> update EHealth a a'
+    (EPlayer p,EHealth a) -> do
+                              (p',c) <- update EPlayer p $ do
+                                let c = p^.pHealth >= 100
+                                unless c $ pHealth += a^.hQuantity
+                                return c
+                              (p',) <$> update EHealth a $ when c respawn
+    (EPlayer p,EHealth a) -> pairBind EPlayer p pAct EHealth a hAct where
+                              pAct = do
+                                let c = p^.pHealth >= 100
+                                unless c $ pHealth += a^.hQuantity
+                                return c
+                              hAct c = when c respawn
+-}
+    (EPlayer p,EBullet a) -> (,) <$> update EPlayer p (pHealth -= a^.bDamage)
+                                 <*> update EBullet a die
+
+    (EPlayer p,EArmor a)  -> (,) <$> update EPlayer p (pArmor += a^.rQuantity)
+                                 <*> update EArmor a die
+
+    (EPlayer p,EAmmo a)   -> (,) <$> update EPlayer p (pAmmo += a^.aQuantity)
+                                 <*> update EAmmo a die
+
+    (EPlayer p,EWeapon a) -> (,) <$> update EPlayer p (pAmmo += 10)
+                                 <*> update EWeapon a die
+
+    (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
+                                 <*> update ELava a (return ())
+
+    (a,b) | swap -> fun False (b,a)
+    _ -> undefined
+
+  oncePerSec = do
+    t <- use pDamageTimer
+    if t > time then return False else do
+      pDamageTimer .= time + 1
+      return True
+
 updateEntities :: Input -> [Entity] -> [Entity]
 updateEntities input@Input{..} ents = do
   let ients = zip ents [0..]
@@ -148,6 +257,7 @@ updateEntities input@Input{..} ents = do
     PSpawn  a -> go PSpawn $ spawn time dtime a
     a -> [a]
 
+myEvalRWS' a m = myEvalRWS m a
 myEvalRWS m a = evalRWS m a a
 
 initialPlayer = Player
@@ -168,6 +278,43 @@ spawn t dt = myEvalRWS $ do
     ent <- view sEntity
     tell [ent]
     return Nothing
+
+spawn' :: Time -> DTime -> EM Spawn ()
+spawn' t dt = do
+  spawnTime <- view sSpawnTime
+  unless (t < spawnTime) $ do
+    ent <- view sEntity
+    tell [ent]
+    die
+
+player' :: Input -> EM Player ()
+player' input@Input{..} = do
+  -- acceleration according input
+  pAngle += rightmove * dtime
+  angle <- use pAngle
+  let direction = unitVectorAtAngle $ degToRad angle
+  pVelocity += forwardmove * dtime
+  -- friction
+  len <- use pVelocity
+  let friction = 150
+  pVelocity %= (*) (max 0 $ (len - dtime * friction * signum len) / len)
+  -- move
+  pVelocity %= max (-200) . min 200
+  velocity <- use pVelocity
+  pPosition += mulSV (dtime * velocity) direction
+
+  -- shoot
+  shootTime <- view pShootTime
+  when (shoot && shootTime < time) $ do
+    pos <- use pPosition
+    tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
+    pShootTime .= time + 0.1
+
+  -- death
+  health <- use pHealth
+  unless (health > 0) $ do
+    tell [PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer]
+    die
 
 player :: Input -> [Entity] -> Player -> (Maybe Player,[Entity])
 player input@Input{..} c = myEvalRWS $ do
@@ -224,6 +371,16 @@ bullet t dt c = myEvalRWS $ do
   bLifeTime -= dt
   lifeTime <- use bLifeTime
   if lifeTime < 0 || not (null c) then return Nothing else Just <$> get
+
+bullet' :: Time -> DTime -> EM Bullet ()
+bullet' t dt = do
+  (u,v) <- use bDirection
+  bPosition += (dt * u, dt * v)
+  -- die on collision
+  -- die on spent lifetime
+  bLifeTime -= dt
+  lifeTime <- use bLifeTime
+  when (lifeTime < 0) die
 
 respawnOnTouch f t dt c = myEvalRWS $ do
   if null c then Just <$> get else do
