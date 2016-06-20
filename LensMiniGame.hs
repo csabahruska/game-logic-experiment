@@ -11,6 +11,8 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.Functor.Identity
 import Control.Monad.RWS
+import Control.Monad.Random
+import System.Random.Mersenne.Pure64
 
 import Data.Vector ((!),(//))
 import qualified Data.Vector as V
@@ -31,7 +33,7 @@ import Debug.Trace
     done - touch lava that cause damage once per second since the first touch
     done - control player's acceleration instead of position, also add friction
     done - don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
-    randomize spawn time
+    done - randomize spawn time
     count deaths and kills
     drop inventory on death
     teleport
@@ -148,14 +150,15 @@ collide ents = x where
     ELava a   -> Just (a^.lPosition, 50)
     _ -> Nothing
 
-type EM s a = ReaderT s (StateT s (MaybeT (Writer [Entity]))) a
-type CM a = Writer [Entity] a
+type EM s a = ReaderT s (StateT s (MaybeT (WriterT [Entity] (Rand PureMT)))) a
+type CM a = WriterT [Entity] (Rand PureMT) a
 
 die = fail "die"
 
 respawn t f = do
   s <- get
-  tell [PSpawn $ Spawn (t + 5) (f s)]
+  t' <- getRandomR (t + 5, t + 10)
+  tell [PSpawn $ Spawn t' (f s)]
   die
 
 update :: (s -> Entity) -> s -> EM s a -> CM (Maybe Entity)
@@ -167,23 +170,23 @@ update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
   step entities, also collect generated entities
   append generated entities
 -}
-updateEntities :: Input -> [Entity] -> [Entity]
-updateEntities input@Input{..} ents = catMaybes (V.toList nextEnts) ++ newEnts where
+updateEntities :: PureMT -> Input -> [Entity] -> (PureMT,[Entity])
+updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList nextEnts) ++ newEnts) where
   entityVector :: V.Vector (Maybe Entity)
   entityVector = V.fromList $ map Just ents
 
   collisions :: [(Int,Int)]
   collisions = collide ents
 
-  (nextEnts,newEnts) = collect $ do
+  ((nextEnts,newEnts),randGen') = collect $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
           (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
           _ -> return entV
     v <- foldM go entityVector collisions
     mapM (maybe (return Nothing) step) v
 
-  collect :: Writer w a -> (a,w)
-  collect m = runIdentity $ runWriterT m
+  collect :: WriterT w (Rand PureMT) a -> ((a,w),PureMT)
+  collect m = runIdentity $ runRandT (runWriterT m) randGen
 
   step :: Entity -> CM (Maybe Entity)
   step = \case
@@ -300,6 +303,7 @@ data World
   = World
   { _wEntities  :: [Entity]
   , _wInput     :: Input
+  , _wRandomGen :: PureMT
   } deriving Show
 
 makeLenses ''World
@@ -322,7 +326,11 @@ stepFun dt = execState $ do
   -- update time
   wInput %= (\i -> i {dtime = dt, time = time i + dt})
   input <- use wInput
-  wEntities %= updateEntities input
+  ents <- use wEntities
+  rand <- use wRandomGen
+  let (r,e) = updateEntities rand input ents
+  wEntities .= e
+  wRandomGen .= r
 
 renderFun w = Pictures $ flip map (w^.wEntities) $ \case
   EPlayer p -> let (x,y) = p^.pPosition
@@ -347,6 +355,6 @@ emptyWorld = World
   , EArmor  (Armor (200,100) 30)
   , EHealth (Health (100, 200) 50)
   , ELava   (Lava (-200,-100) 10)
-  ] emptyInput
+  ] emptyInput (pureMT 123456789)
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
