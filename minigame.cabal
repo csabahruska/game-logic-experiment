@@ -22,6 +22,10 @@ executable minigame
   build-depends:       base >=4.8 && <4.9,
                        gloss >=1.10 && <1.11,
                        mtl >=2.2 && <2.3,
+                       transformers >=0.4 && <0.5,
+                       vector >=0.11 && <0.12,
+                       mersenne-random-pure64,
+                       MonadRandom,
                        microlens-platform >=0.3 && <0.4
   -- hs-source-dirs:      
   default-language:    Haskell2010
