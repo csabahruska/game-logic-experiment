@@ -34,9 +34,10 @@ import Debug.Trace
     done - control player's acceleration instead of position, also add friction
     done - don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
     done - randomize spawn time
-    count deaths and kills
+    full q3 inventory
     drop inventory on death
-    teleport
+    count deaths and kills (persistent data support)
+    teleport (target support)
     jump pad
     animated visual only elements (i.e. particles on collision)
 
