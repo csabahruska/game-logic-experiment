@@ -14,3 +14,7 @@ question:
     #1 keep it together and use some mechanism to allow a state change what also depends on other actors's state (transactional)
 
     #2 scatter the rules and allow actors to modify each others
+
+two universes:
+  game world    - entities can interact   (step + interaction)
+  visual world  - visuals are independent (only step, no interction)

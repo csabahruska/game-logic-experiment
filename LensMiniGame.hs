@@ -34,12 +34,12 @@ import Debug.Trace
     done - control player's acceleration instead of position, also add friction
     done - don't pickup items when the inventory is full (filter collision by entity state, i.e. they collide when they accepts the event)
     done - randomize spawn time
+    done - drop inventory on death
+    done - animated visual only elements (i.e. particles on collision)
     full q3 inventory
-    drop inventory on death
     count deaths and kills (persistent data support)
     teleport (target support)
     jump pad
-    animated visual only elements (i.e. particles on collision)
 
   goals:
     rule based
@@ -50,6 +50,44 @@ import Debug.Trace
   events:
     collision between entities and client
 
+-}
+{-
+  quake 3 inventory
+    weapons
+      gauntlet
+      machinegun
+      shotgun
+      grenade launcher
+      rocket launcher
+      lightning
+      railgun
+      plasmagun
+      bfg
+      grappling hook
+    ammos
+      for each weapon
+    armors
+      armor shard   5
+      armor combat  50
+      armor body    100
+    health
+      health small  5
+      health        25
+      health large  50
+      health mega   100
+    powerup
+      quad    (quad damage)
+      enviro  (battle suit)
+      haste   (speed)
+      invis   (invisibility)
+      regen   (regeneration)
+      flight
+    holdable
+      teleporter
+      medkit
+    team
+      redflag
+      blueflag
 -}
 
 type Vec2 = Vector
@@ -127,6 +165,19 @@ data Entity
 
 concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava]
 
+data Particle
+  = Particle
+  { _vpPosition   :: Vec2
+  , _vpDirection  :: Vec2
+  , _vpLifeTime   :: Float
+  } deriving Show
+
+data Visual
+  = VParticle Particle
+  deriving Show
+
+concat <$> mapM makeLenses [''Particle]
+
 type Time = Float
 type DTime = Float
 
@@ -151,19 +202,23 @@ collide ents = x where
     ELava a   -> Just (a^.lPosition, 50)
     _ -> Nothing
 
-type EM s a = ReaderT s (StateT s (MaybeT (WriterT [Entity] (Rand PureMT)))) a
-type CM a = WriterT [Entity] (Rand PureMT) a
+type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a
+type VM s a = ReaderT s (StateT s (MaybeT (WriterT ([Visual]) (Rand PureMT)))) a
+type CM a = WriterT ([Entity],[Visual]) (Rand PureMT) a
 
 die = fail "die"
 
 respawn t f = do
   s <- get
   t' <- getRandomR (t + 5, t + 10)
-  tell [PSpawn $ Spawn t' (f s)]
+  addEntities [PSpawn $ Spawn t' (f s)]
   die
 
-update :: (s -> Entity) -> s -> EM s a -> CM (Maybe Entity)
+--update :: Monoid w => (s -> e) -> s -> ReaderT s (StateT s (MaybeT (WriterT w (Rand PureMT)))) a -> CM (Maybe e)
 update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
+
+collect :: Monoid w => PureMT -> WriterT w (Rand PureMT) a -> ((a,w),PureMT)
+collect randGen m = runIdentity $ runRandT (runWriterT m) randGen
 
 {-
   collect collided entities
@@ -171,23 +226,21 @@ update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
   step entities, also collect generated entities
   append generated entities
 -}
-updateEntities :: PureMT -> Input -> [Entity] -> (PureMT,[Entity])
-updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList nextEnts) ++ newEnts) where
+updateEntities :: PureMT -> Input -> [Entity] -> (PureMT,[Entity],[Visual])
+updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList nextEnts) ++ newEnts,newVisuals) where
+
   entityVector :: V.Vector (Maybe Entity)
   entityVector = V.fromList $ map Just ents
 
   collisions :: [(Int,Int)]
   collisions = collide ents
 
-  ((nextEnts,newEnts),randGen') = collect $ do
+  ((nextEnts,(newEnts,newVisuals)),randGen') = collect randGen $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
           (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
           _ -> return entV
     v <- foldM go entityVector collisions
     mapM (maybe (return Nothing) step) v
-
-  collect :: WriterT w (Rand PureMT) a -> ((a,w),PureMT)
-  collect m = runIdentity $ runRandT (runWriterT m) randGen
 
   step :: Entity -> CM (Maybe Entity)
   step = \case
@@ -241,12 +294,15 @@ initialPlayer = Player
   , _pDamageTimer = 0
   }
 
+addEntities ents = tell (ents,[])
+addVisuals vis = tell ([],vis)
+
 stepSpawn :: Time -> DTime -> EM Spawn ()
 stepSpawn t dt = do
   spawnTime <- view sSpawnTime
   unless (t < spawnTime) $ do
     ent <- view sEntity
-    tell [ent]
+    addEntities [ent]
     die
 
 stepPlayer :: Input -> EM Player ()
@@ -269,24 +325,49 @@ stepPlayer input@Input{..} = do
   shootTime <- view pShootTime
   when (shoot && shootTime < time) $ do
     pos <- use pPosition
-    tell [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
+    addEntities [EBullet $ Bullet (pos + mulSV 30 direction) (mulSV 500 direction) 1 2]
     pShootTime .= time + 0.1
 
   pHealth %= min 200
   -- death
   health <- use pHealth
   unless (health > 0) $ do
-    tell [PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer]
+    [x1,y1,x2,y2] <- replicateM 4 $ getRandomR (-50,50)
+    pos <- use pPosition
+    ammo <- use pAmmo
+    armor <- use pArmor
+    addEntities
+      [ PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer
+      , EAmmo  $ Ammo (pos + (x1,y1)) (ammo)
+      , EArmor $ Armor (pos + (x2,y2)) (armor)
+      ]
+    addVisuals [VParticle $ Particle pos (mulSV 400 $ unitVectorAtAngle i) 1 | i <- [0..100]]
     die
 
 stepBullet :: Time -> DTime -> EM Bullet ()
 stepBullet t dt = do
   (u,v) <- use bDirection
   bPosition += (dt * u, dt * v)
-  -- die on collision
   -- die on spent lifetime
   bLifeTime -= dt
   lifeTime <- use bLifeTime
+  when (lifeTime < 0) die
+
+updateVisuals :: PureMT -> Time -> DTime -> [Visual] -> (PureMT,[Visual])
+updateVisuals randGen time dtime visuals = (randGen',catMaybes visuals' ++ newVisuals) where
+  ((visuals',newVisuals),randGen') = collect randGen $ mapM stepVisual visuals
+
+  stepVisual = \case
+    VParticle a -> update VParticle a $ stepParticle time dtime
+    e -> return $ Just e
+
+stepParticle :: Time -> DTime -> VM Particle ()
+stepParticle t dt = do
+  (u,v) <- use vpDirection
+  vpPosition += (dt * u, dt * v)
+  -- die on spent lifetime
+  vpLifeTime -= dt
+  lifeTime <- use vpLifeTime
   when (lifeTime < 0) die
 
 -----
@@ -303,6 +384,7 @@ data Input
 data World
   = World
   { _wEntities  :: [Entity]
+  , _wVisuals   :: [Visual]
   , _wInput     :: Input
   , _wRandomGen :: PureMT
   } deriving Show
@@ -328,24 +410,32 @@ stepFun dt = execState $ do
   wInput %= (\i -> i {dtime = dt, time = time i + dt})
   input <- use wInput
   ents <- use wEntities
+  vis <- use wVisuals
   rand <- use wRandomGen
-  let (r,e) = updateEntities rand input ents
+  let (r1,e,v1) = updateEntities rand input ents
+      Input{..} = input
+      (r2,v2) = updateVisuals r1 time dtime vis
   wEntities .= e
-  wRandomGen .= r
+  wRandomGen .= r2
+  wVisuals .= v1 ++ v2
 
-renderFun w = Pictures $ flip map (w^.wEntities) $ \case
-  EPlayer p -> let (x,y) = p^.pPosition
-                   gfx = Translate x y $ Rotate (-p^.pAngle) $ Pictures [Polygon [(-10,-6),(10,0),(-10,6)],Circle 20]
-                   hud = Translate (-50) 250 $ Scale 0.2 0.2 $ Text $ printf "health:%d ammo:%d armor:%d" (p^.pHealth) (p^.pAmmo) (p^.pArmor)
-               in Pictures [hud,gfx]
-  EBullet b -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
-  EWeapon a -> Translate x y $ Color blue $ Circle 10 where (x,y) = a^.wPosition
-  EAmmo a   -> Translate x y $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
-  EArmor a  -> Translate x y $ Color red $ Circle 10 where (x,y) = a^.rPosition
-  EHealth a -> Translate x y $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
-  ELava a   -> Translate x y $ Color orange $ Circle 50 where (x,y) = a^.lPosition
+renderFun w = Pictures $ ents ++ vis where
+  ents = flip map (w^.wEntities) $ \case
+    EPlayer p -> let (x,y) = p^.pPosition
+                     gfx = Translate x y $ Rotate (-p^.pAngle) $ Pictures [Polygon [(-10,-6),(10,0),(-10,6)],Circle 20]
+                     hud = Translate (-50) 250 $ Scale 0.2 0.2 $ Text $ printf "health:%d ammo:%d armor:%d" (p^.pHealth) (p^.pAmmo) (p^.pArmor)
+                 in Pictures [hud,gfx]
+    EBullet b -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
+    EWeapon a -> Translate x y $ Color blue $ Circle 10 where (x,y) = a^.wPosition
+    EAmmo a   -> Translate x y $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
+    EArmor a  -> Translate x y $ Color red $ Circle 10 where (x,y) = a^.rPosition
+    EHealth a -> Translate x y $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
+    ELava a   -> Translate x y $ Color orange $ Circle 50 where (x,y) = a^.lPosition
+    _ -> Blank
 
-  _ -> Blank
+  vis = flip map (w^.wVisuals) $ \case
+    VParticle a -> Translate x y $ Color red $ Circle 1 where (x,y) = a^.vpPosition
+    _ -> Blank
 
 emptyInput = Input 0 0 False 0 0
 emptyWorld = World
@@ -356,6 +446,6 @@ emptyWorld = World
   , EArmor  (Armor (200,100) 30)
   , EHealth (Health (100, 200) 50)
   , ELava   (Lava (-200,-100) 10)
-  ] emptyInput (pureMT 123456789)
+  ] [] emptyInput (pureMT 123456789)
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
