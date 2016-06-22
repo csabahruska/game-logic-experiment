@@ -49,7 +49,10 @@ import Debug.Trace
 
   events:
     collision between entities and client
-
+-}
+{-
+  bugs:
+    dropped inventory respawn
 -}
 {-
   quake 3 inventory
@@ -341,7 +344,7 @@ stepPlayer input@Input{..} = do
       , EAmmo  $ Ammo (pos + (x1,y1)) (ammo)
       , EArmor $ Armor (pos + (x2,y2)) (armor)
       ]
-    addVisuals [VParticle $ Particle pos (mulSV 400 $ unitVectorAtAngle i) 1 | i <- [0..100]]
+    addVisuals [VParticle $ Particle pos (mulSV 400 $ unitVectorAtAngle (pi / 50 * i)) 1 | i <- [0..100]]
     die
 
 stepBullet :: Time -> DTime -> EM Bullet ()
