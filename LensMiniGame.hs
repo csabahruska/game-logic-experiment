@@ -5,12 +5,11 @@ import Graphics.Gloss.Data.Vector
 import Graphics.Gloss.Geometry.Angle
 
 import Data.Maybe
-import Control.Monad.State
-import Control.Monad.Writer
+import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
 import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.Functor.Identity
-import Control.Monad.RWS
 import Control.Monad.Random
 import System.Random.Mersenne.Pure64
 
@@ -40,6 +39,8 @@ import Debug.Trace
     count deaths and kills (persistent data support)
     teleport (target support)
     jump pad
+    door
+    button + movable
 
   goals:
     rule based
@@ -49,6 +50,15 @@ import Debug.Trace
 
   events:
     collision between entities and client
+-}
+{-
+  random missing features:
+    character animations
+    weapon change animation
+    weapon animations
+      shoot
+      explosion
+      weapon idle/etc
 -}
 {-
   quake 3 inventory
@@ -428,12 +438,14 @@ renderFun w = Pictures $ ents ++ vis where
                      hud = Translate (-50) 250 $ Scale 0.2 0.2 $ Text $ printf "health:%d ammo:%d armor:%d" (p^.pHealth) (p^.pAmmo) (p^.pArmor)
                  in Pictures [hud,gfx]
     EBullet b -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
-    EWeapon a -> Translate x y $ Color blue $ Circle 10 where (x,y) = a^.wPosition
-    EAmmo a   -> Translate x y $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
-    EArmor a  -> Translate x y $ Color red $ Circle 10 where (x,y) = a^.rPosition
-    EHealth a -> Translate x y $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
-    ELava a   -> Translate x y $ Color orange $ Circle 50 where (x,y) = a^.lPosition
+    EWeapon a -> Translate x y $ text "Weapon" $ Color blue $ Circle 10 where (x,y) = a^.wPosition
+    EAmmo a   -> Translate x y $ text "Ammo" $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
+    EArmor a  -> Translate x y $ text "Armor" $ Color red $ Circle 10 where (x,y) = a^.rPosition
+    EHealth a -> Translate x y $ text "Health" $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
+    ELava a   -> Translate x y $ text "Lava" $ Color orange $ Circle 50 where (x,y) = a^.lPosition
     _ -> Blank
+
+  text s p = Pictures [Scale 0.1 0.1 $ Text s, p]
 
   vis = flip map (w^.wVisuals) $ \case
     VParticle a -> Translate x y $ Color red $ Circle 1 where (x,y) = a^.vpPosition
