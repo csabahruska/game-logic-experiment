@@ -51,10 +51,6 @@ import Debug.Trace
     collision between entities and client
 -}
 {-
-  bugs:
-    dropped inventory respawn
--}
-{-
   quake 3 inventory
     weapons
       gauntlet
@@ -114,27 +110,30 @@ data Player
 
 data Bullet
   = Bullet
-  { _bPosition   :: Vec2
-  , _bDirection  :: Vec2
-  , _bDamage     :: Int
-  , _bLifeTime   :: Float
+  { _bPosition    :: Vec2
+  , _bDirection   :: Vec2
+  , _bDamage      :: Int
+  , _bLifeTime    :: Float
   } deriving Show
 
 data Weapon
   = Weapon
-  { _wPosition   :: Vec2
+  { _wPosition    :: Vec2
+  , _wDropped     :: Bool
   } deriving Show
 
 data Ammo
   = Ammo
-  { _aPosition   :: Vec2
-  , _aQuantity   :: Int
+  { _aPosition    :: Vec2
+  , _aQuantity    :: Int
+  , _aDropped     :: Bool
   } deriving Show
 
 data Armor
   = Armor
-  { _rPosition   :: Vec2
-  , _rQuantity   :: Int
+  { _rPosition    :: Vec2
+  , _rQuantity    :: Int
+  , _rDropped     :: Bool
   } deriving Show
 
 data Health
@@ -264,13 +263,13 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
                                  <*> update EBullet a die
 
     (EPlayer p,EArmor a)  -> (,) <$> update EPlayer p (pArmor += a^.rQuantity)
-                                 <*> update EArmor a (respawn time EArmor)
+                                 <*> update EArmor a (if a^.rDropped then die else respawn time EArmor)
 
     (EPlayer p,EAmmo a)   -> (,) <$> update EPlayer p (pAmmo += a^.aQuantity)
-                                 <*> update EAmmo a (respawn time EAmmo)
+                                 <*> update EAmmo a (if a^.aDropped then die else respawn time EAmmo)
 
     (EPlayer p,EWeapon a) -> (,) <$> update EPlayer p (pAmmo += 10)
-                                 <*> update EWeapon a (respawn time EWeapon)
+                                 <*> update EWeapon a (if a^.wDropped then die else respawn time EWeapon)
 
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
@@ -341,8 +340,8 @@ stepPlayer input@Input{..} = do
     armor <- use pArmor
     addEntities
       [ PSpawn $ Spawn (time + 2) $ EPlayer initialPlayer
-      , EAmmo  $ Ammo (pos + (x1,y1)) (ammo)
-      , EArmor $ Armor (pos + (x2,y2)) (armor)
+      , EAmmo  $ Ammo (pos + (x1,y1)) (ammo) True
+      , EArmor $ Armor (pos + (x2,y2)) (armor) True
       ]
     addVisuals [VParticle $ Particle pos (mulSV 400 $ unitVectorAtAngle (pi / 50 * i)) 1 | i <- [0..100]]
     die
@@ -444,9 +443,9 @@ emptyInput = Input 0 0 False 0 0
 emptyWorld = World
   [ EPlayer initialPlayer
   , EBullet (Bullet (30,30) (10,10) 100 10)
-  , EWeapon (Weapon (10,20))
-  , EAmmo   (Ammo (100,100) 20)
-  , EArmor  (Armor (200,100) 30)
+  , EWeapon (Weapon (10,20) False)
+  , EAmmo   (Ammo (100,100) 20 False)
+  , EArmor  (Armor (200,100) 30 False)
   , EHealth (Health (100, 200) 50)
   , ELava   (Lava (-200,-100) 10)
   ] [] emptyInput (pureMT 123456789)
