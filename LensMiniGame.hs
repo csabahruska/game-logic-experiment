@@ -164,18 +164,32 @@ data Lava
   , _lDamage   :: Int
   } deriving Show
 
+data Teleport
+  = Teleport
+  { _tPosition  :: Vec2
+  , _tTarget    :: String
+  } deriving Show
+
+data Target
+  = Target
+  { _ttPosition   :: Vec2
+  , _ttTargetName :: String
+  } deriving Show
+
 data Entity
-  = EPlayer Player
-  | EBullet Bullet
-  | EWeapon Weapon
-  | EAmmo   Ammo
-  | EArmor  Armor
-  | EHealth Health
-  | ELava   Lava
-  | PSpawn  Spawn
+  = EPlayer   Player
+  | EBullet   Bullet
+  | EWeapon   Weapon
+  | EAmmo     Ammo
+  | EArmor    Armor
+  | EHealth   Health
+  | ELava     Lava
+  | ETeleport Teleport
+  | ETarget   Target
+  | PSpawn    Spawn
   deriving Show
 
-concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava]
+concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava, ''Teleport, ''Target]
 
 data Particle
   = Particle
@@ -205,13 +219,14 @@ collide ents = x where
       , magV (p1 - p2) < r1 + r2
       ]
   brush = \case
-    EPlayer a -> Just (a^.pPosition, 20)
-    EBullet a -> Just (a^.bPosition, 2)
-    EWeapon a -> Just (a^.wPosition, 10)
-    EAmmo a   -> Just (a^.aPosition, 8)
-    EArmor a  -> Just (a^.rPosition, 10)
-    EHealth a -> Just (a^.hPosition, 10)
-    ELava a   -> Just (a^.lPosition, 50)
+    EPlayer a   -> Just (a^.pPosition, 20)
+    EBullet a   -> Just (a^.bPosition, 2)
+    EWeapon a   -> Just (a^.wPosition, 10)
+    EAmmo a     -> Just (a^.aPosition, 8)
+    EArmor a    -> Just (a^.rPosition, 10)
+    EHealth a   -> Just (a^.hPosition, 10)
+    ELava a     -> Just (a^.lPosition, 50)
+    ETeleport a -> Just (a^.tPosition, 20)
     _ -> Nothing
 
 type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a
@@ -283,6 +298,9 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
 
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
+
+    (EPlayer p,ETeleport a) -> (,) <$> update EPlayer p (pPosition .= (0,0)) -- TODO: lookup target, get the position + implement telefrag (killbox)
+                                   <*> update ETeleport a (return ())
 
     (EBullet a,b)         -> (,Just b) <$> update EBullet a die
 
@@ -437,12 +455,14 @@ renderFun w = Pictures $ ents ++ vis where
                      gfx = Translate x y $ Rotate (-p^.pAngle) $ Pictures [Polygon [(-10,-6),(10,0),(-10,6)],Circle 20]
                      hud = Translate (-50) 250 $ Scale 0.2 0.2 $ Text $ printf "health:%d ammo:%d armor:%d" (p^.pHealth) (p^.pAmmo) (p^.pArmor)
                  in Pictures [hud,gfx]
-    EBullet b -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
-    EWeapon a -> Translate x y $ text "Weapon" $ Color blue $ Circle 10 where (x,y) = a^.wPosition
-    EAmmo a   -> Translate x y $ text "Ammo" $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
-    EArmor a  -> Translate x y $ text "Armor" $ Color red $ Circle 10 where (x,y) = a^.rPosition
-    EHealth a -> Translate x y $ text "Health" $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
-    ELava a   -> Translate x y $ text "Lava" $ Color orange $ Circle 50 where (x,y) = a^.lPosition
+    EBullet b   -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
+    EWeapon a   -> Translate x y $ text "Weapon" $ Color blue $ Circle 10 where (x,y) = a^.wPosition
+    EAmmo a     -> Translate x y $ text "Ammo" $ Color (light blue) $ Circle 8 where (x,y) = a^.aPosition
+    EArmor a    -> Translate x y $ text "Armor" $ Color red $ Circle 10 where (x,y) = a^.rPosition
+    EHealth a   -> Translate x y $ text "Health" $ Color yellow $ Circle 10 where (x,y) = a^.hPosition
+    ELava a     -> Translate x y $ text "Lava" $ Color orange $ Circle 50 where (x,y) = a^.lPosition
+    ETeleport a -> Translate x y $ text "Teleport" $ Color magenta $ Circle 20 where (x,y) = a^.tPosition
+    ETarget a   -> Translate x y $ text "Target" Blank where (x,y) = a^.ttPosition
     _ -> Blank
 
   text s p = Pictures [Scale 0.1 0.1 $ Text s, p]
@@ -454,12 +474,14 @@ renderFun w = Pictures $ ents ++ vis where
 emptyInput = Input 0 0 False 0 0
 emptyWorld = World
   [ EPlayer initialPlayer
-  , EBullet (Bullet (30,30) (10,10) 100 10)
-  , EWeapon (Weapon (10,20) False)
-  , EAmmo   (Ammo (100,100) 20 False)
-  , EArmor  (Armor (200,100) 30 False)
-  , EHealth (Health (100, 200) 50)
-  , ELava   (Lava (-200,-100) 10)
+  , EBullet   (Bullet (30,30) (10,10) 100 10)
+  , EWeapon   (Weapon (10,20) False)
+  , EAmmo     (Ammo (100,100) 20 False)
+  , EArmor    (Armor (200,100) 30 False)
+  , EHealth   (Health (100, 200) 50)
+  , ELava     (Lava (-200,-100) 10)
+  , ETeleport (Teleport (-200,100) "t1")
+  , ETarget   (Target (300,-100) "t1")
   ] [] emptyInput (pureMT 123456789)
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
