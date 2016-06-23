@@ -19,7 +19,7 @@ question:
 
 two universes:
   game world    - entities can interact   (step + interaction)
-  visual world  - visuals are independent (only step, no interction)
+  visual world  - visuals are independent (only step, no interaction)
 
 
 question:
