@@ -15,6 +15,25 @@ question:
 
     #2 scatter the rules and allow actors to modify each others
 
+  choice: #1
+
 two universes:
   game world    - entities can interact   (step + interaction)
   visual world  - visuals are independent (only step, no interction)
+
+
+question:
+  how to find target when teleporting?
+    #1 use targetname as reference and lookup the target from the previous frame?
+
+    #2 instead of references, teleports should contain the targets
+
+    hint: what can happen to targets? who can modify them?
+
+
+  how to do telefrag (killbox)? also how to do volume damage of a rocket impact?
+    #1 damage box should be an entity, and it can change it's collision volume if necessary
+        hint: this adds one frame delay
+              however as a remedy we can introduce a new post interaction pass (e.g. damage pass)
+
+    #2 we allow entity logic to modify other's state
