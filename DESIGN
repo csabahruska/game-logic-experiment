@@ -35,5 +35,17 @@ question:
     #1 damage box should be an entity, and it can change it's collision volume if necessary
         hint: this adds one frame delay
               however as a remedy we can introduce a new post interaction pass (e.g. damage pass)
+      #1a presistent killbox
+            this would be a single interaction between the player that enters the teleport and everybody in the killbox at that moment
+            pro:  increases expressive power, clean solution
+            cons: needs to support interaction between many elements, right now only interaction paris are supported
+
+      #1b dynamic killbox
+            killbox spawns on teleport, and also spawns the player at the new position
+            pro:  already implemented
+            cons: adds delay, player will be missing for one frame
 
     #2 we allow entity logic to modify other's state
+
+idea:
+  as a preformance optimization we should prefilter interactions with masking (bitmask for each entity type)
