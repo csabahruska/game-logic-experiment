@@ -38,6 +38,7 @@ import Debug.Trace
     full q3 inventory
     count deaths and kills (persistent data support)
     teleport (target support)
+    teleport telefrag with killbox
     jump pad
     door
     button + movable
@@ -59,6 +60,12 @@ import Debug.Trace
       shoot
       explosion
       weapon idle/etc
+-}
+{-
+  interactions to handle
+    item on a mover - problem: relative position
+    killbox         - problem: many things in one interaction
+    teleport target - problem: target = referencex
 -}
 {-
   quake 3 inventory
@@ -104,7 +111,7 @@ type Vec2 = Vector
 _x = _1
 _y = _2
 
--- entities
+-- entities for game logic
 
 data Player
   = Player
@@ -191,6 +198,8 @@ data Entity
 
 concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava, ''Teleport, ''Target]
 
+-- visuals for game graphics
+
 data Particle
   = Particle
   { _vpPosition   :: Vec2
@@ -229,9 +238,9 @@ collide ents = x where
     ETeleport a -> Just (a^.tPosition, 20)
     _ -> Nothing
 
-type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a
-type VM s a = ReaderT s (StateT s (MaybeT (WriterT ([Visual]) (Rand PureMT)))) a
-type CM a = WriterT ([Entity],[Visual]) (Rand PureMT) a
+type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a -- entity update monad (mutable state + collect new entities/visuals)
+type VM s a = ReaderT s (StateT s (MaybeT (WriterT ([Visual]) (Rand PureMT)))) a -- visual item update monad + collect new visual items
+type CM a = WriterT ([Entity],[Visual]) (Rand PureMT) a -- monad for collect new entites or visuals
 
 die = fail "die"
 
@@ -266,8 +275,8 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
           (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
           _ -> return entV
-    v <- foldM go entityVector collisions
-    mapM (maybe (return Nothing) step) v
+    v <- foldM go entityVector collisions -- handle interactions
+    mapM (maybe (return Nothing) step) v  -- step each entity
 
   step :: Entity -> CM (Maybe Entity)
   step = \case

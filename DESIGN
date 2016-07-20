@@ -49,3 +49,5 @@ question:
 
 idea:
   as a preformance optimization we should prefilter interactions with masking (bitmask for each entity type)
+
+  use Kd-Tree (kdt package) to optimize entity query
