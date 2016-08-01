@@ -25,6 +25,8 @@ two universes:
 question:
   how to find target when teleporting?
     #1 use targetname as reference and lookup the target from the previous frame?
+        #1a - collect targets in teh beginning of each frame
+        #1b - the target should be looked up using the interaction preprocess phase (same used for teleport killbox)
 
     #2 instead of references, teleports should contain the targets
 

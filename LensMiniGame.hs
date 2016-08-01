@@ -36,9 +36,17 @@ import Debug.Trace
     done - drop inventory on death
     done - animated visual only elements (i.e. particles on collision)
     full q3 inventory
-    count deaths and kills (persistent data support)
-    teleport (target support)
-    teleport telefrag with killbox
+    * count deaths and kills (persistent data support)
+        higher level rules:
+          time limit
+          frag/ctf score limit
+          count score
+          keep track of statistics
+        idea: emit frags on deathmatch kills, containing the necessary info
+              emit flag scores / events
+          question: does this break state locality? (this is ad hoc, but it's ok to me)
+    * teleport (target support)
+    * teleport telefrag with killbox
     jump pad
     door
     button + movable
@@ -51,6 +59,17 @@ import Debug.Trace
 
   events:
     collision between entities and client
+
+  design ideas:
+    transfer function can emit events (data for higher level rules)
+
+  rule hierarchy
+    #1 - game mode
+      high score tracking
+      count frags / flag scores
+      measure time
+    #2 - action rules
+      kills, teleports, collisions, etc.
 -}
 {-
   random missing features:
@@ -123,6 +142,8 @@ data Player
   , _pArmor       :: Int
   , _pShootTime   :: Float
   , _pDamageTimer :: Float
+  , _pName        :: String
+  , _pId          :: Int
   } deriving Show
 
 data Bullet
@@ -268,7 +289,7 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
   entityVector :: V.Vector (Maybe Entity)
   entityVector = V.fromList $ map Just ents
 
-  collisions :: [(Int,Int)]
+  collisions :: [(Int,Int)] -- post process collisions into interaction events
   collisions = collide ents
 
   ((nextEnts,(newEnts,newVisuals)),randGen') = collect randGen $ do
@@ -285,7 +306,8 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
     PSpawn  a -> update PSpawn a $ stepSpawn time dtime
     e -> return $ Just e
 
-  interact :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity)
+  interact :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity) -- TODO: generalize pairs to interaction event types
+                                                                        --        e.g. player-item, player-teleport, killbox-players
   interact swap = \case
 
     (EPlayer p,EHealth a) -> do -- collects newly create entities also handles random seed
@@ -331,6 +353,8 @@ initialPlayer = Player
   , _pArmor       = 0
   , _pShootTime   = 0
   , _pDamageTimer = 0
+  , _pName        = "Bones"
+  , _pId          = 0
   }
 
 addEntities ents = tell (ents,[])
@@ -461,7 +485,7 @@ stepFun dt = execState $ do
 renderFun w = Pictures $ ents ++ vis where
   ents = flip map (w^.wEntities) $ \case
     EPlayer p -> let (x,y) = p^.pPosition
-                     gfx = Translate x y $ Rotate (-p^.pAngle) $ Pictures [Polygon [(-10,-6),(10,0),(-10,6)],Circle 20]
+                     gfx = Translate x y $ text (p^.pName) $ Rotate (-p^.pAngle) $ Pictures [Polygon [(-10,-6),(10,0),(-10,6)],Circle 20]
                      hud = Translate (-50) 250 $ Scale 0.2 0.2 $ Text $ printf "health:%d ammo:%d armor:%d" (p^.pHealth) (p^.pAmmo) (p^.pArmor)
                  in Pictures [hud,gfx]
     EBullet b   -> Translate x y $ Color green $ Circle 2 where (x,y) = b^.bPosition
