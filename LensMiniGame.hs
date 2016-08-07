@@ -135,7 +135,8 @@ _y = _2
 data Player
   = Player
   { _pPosition    :: Vec2
-  , _pVelocity    :: Float
+  , _pFVelocity   :: Float
+  , _pSVelocity   :: Float
   , _pAngle       :: Float
   , _pHealth      :: Int
   , _pAmmo        :: Int
@@ -346,7 +347,8 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
 
 initialPlayer = Player
   { _pPosition    = (0,0)
-  , _pVelocity    = 0
+  , _pFVelocity   = 0
+  , _pSVelocity   = 0
   , _pAngle       = 0
   , _pHealth      = 100
   , _pAmmo        = 100
@@ -374,16 +376,24 @@ stepPlayer input@Input{..} = do
   pAngle += rightmove * dtime
   angle <- use pAngle
   let direction = unitVectorAtAngle $ degToRad angle
-  pVelocity += forwardmove * dtime
+  pFVelocity += forwardmove * dtime
+  pSVelocity += sidemove * dtime
   -- friction
-  len <- use pVelocity
+  len <- use pFVelocity
+  sideLen <- use pSVelocity
   let friction = 150
-  pVelocity %= (*) (max 0 $ (len - dtime * friction * signum len) / len)
-  -- move
-  pVelocity %= max (-200) . min 200
-  velocity <- use pVelocity
-  pPosition += mulSV (dtime * velocity) direction
+  pFVelocity %= (*) (max 0 $ (len - dtime * friction * signum len) / len)
+  pSVelocity %= (*) (max 0 $ (sideLen - dtime * friction * signum sideLen) / sideLen)
 
+  -- move
+  pFVelocity %= max (-200) . min 200
+  pSVelocity %= max (-200) . min 200
+  forwardVelocity <- use pFVelocity
+  sideVelocity <- use pSVelocity
+
+  pPosition += mulSV (dtime * forwardVelocity) direction
+  let strafeDirection = unitVectorAtAngle $ degToRad (angle - 90)
+  pPosition += mulSV (dtime * sideVelocity) strafeDirection
   -- shoot
   shootTime <- view pShootTime
   when (shoot && shootTime < time) $ do
@@ -439,6 +449,7 @@ data Input
   = Input
   { forwardmove :: Float
   , rightmove   :: Float
+  , sidemove    :: Float
   , shoot       :: Bool
   , dtime       :: Float
   , time        :: Float
@@ -464,6 +475,8 @@ inputFun e w = w & wInput .~ i' where
     EventKey (Char 's') s _ _ -> i {forwardmove = forwardmove - f s}
     EventKey (Char 'd') s _ _ -> i {rightmove = rightmove - f s}
     EventKey (Char 'a') s _ _ -> i {rightmove = rightmove + f s}
+    EventKey (Char 'e') s _ _ -> i {sidemove = sidemove + f s}
+    EventKey (Char 'q') s _ _ -> i {sidemove = sidemove - f s}
     EventKey (SpecialKey KeySpace) s _ _ -> i {shoot = s == Down}
     _ -> i
 
@@ -504,7 +517,7 @@ renderFun w = Pictures $ ents ++ vis where
     VParticle a -> Translate x y $ Color red $ Circle 1 where (x,y) = a^.vpPosition
     _ -> Blank
 
-emptyInput = Input 0 0 False 0 0
+emptyInput = Input 0 0 0 False 0 0
 emptyWorld = World
   [ EPlayer initialPlayer
   , EBullet   (Bullet (30,30) (10,10) 100 10)
