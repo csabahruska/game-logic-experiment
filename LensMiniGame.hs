@@ -331,6 +331,8 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
 
+    -- HINT: teleport targets should be passed here
+    --        where to collect those?
     (EPlayer p,ETeleport a) -> (,) <$> update EPlayer p (pPosition .= (0,0)) -- TODO: lookup target, get the position + implement telefrag (killbox)
                                    <*> update ETeleport a (return ())
 
