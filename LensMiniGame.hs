@@ -35,7 +35,6 @@ import Debug.Trace
     done - randomize spawn time
     done - drop inventory on death
     done - animated visual only elements (i.e. particles on collision)
-    full q3 inventory
     * count deaths and kills (persistent data support)
         higher level rules:
           time limit
@@ -50,6 +49,7 @@ import Debug.Trace
     jump pad
     door
     button + movable
+    full q3 inventory
 
   goals:
     rule based
@@ -205,6 +205,11 @@ data Target
   , _ttTargetName :: String
   } deriving Show
 
+data Killbox
+  = Killbox
+  { _kPosition  :: Vec2
+  } deriving Show
+
 data Entity
   = EPlayer   Player
   | EBullet   Bullet
@@ -215,10 +220,11 @@ data Entity
   | ELava     Lava
   | ETeleport Teleport
   | ETarget   Target
+  | EKillbox  Killbox
   | PSpawn    Spawn
   deriving Show
 
-concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava, ''Teleport, ''Target]
+concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava, ''Teleport, ''Target, ''Killbox]
 
 -- visuals for game graphics
 
@@ -258,6 +264,7 @@ collide ents = x where
     EHealth a   -> Just (a^.hPosition, 10)
     ELava a     -> Just (a^.lPosition, 50)
     ETeleport a -> Just (a^.tPosition, 20)
+    EKillbox a  -> Just (a^.kPosition, 20)
     _ -> Nothing
 
 type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a -- entity update monad (mutable state + collect new entities/visuals)
@@ -278,6 +285,19 @@ update f a m = fmap f <$> runMaybeT (execStateT (runReaderT m a) a)
 collect :: Monoid w => PureMT -> WriterT w (Rand PureMT) a -> ((a,w),PureMT)
 collect randGen m = runIdentity $ runRandT (runWriterT m) randGen
 
+data Interaction
+  = PlayerTeleportKillboxPlayers Player Teleport Killbox [Player]
+  -- player item
+  | PlayerHealth  Player Health
+  | PlayerArmor   Player Armor
+  | PlayerAmmo    Player Ammo
+  | PlayerWeapon  Player Weapon
+  -- player level
+  | PlayerLava    Player Lava
+  -- bullet
+  | PlayerBullet  Player Bullet
+  -- add: bullet-level,bullet-item
+
 {-
   collect collided entities
   transform entities in interaction, collect newly generated entities
@@ -292,6 +312,9 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
 
   collisions :: [(Int,Int)] -- post process collisions into interaction events
   collisions = collide ents
+
+  interactions :: [(Int,Int)] -> [Interaction]
+  interactions _ = []
 
   ((nextEnts,(newEnts,newVisuals)),randGen') = collect randGen $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
@@ -310,6 +333,14 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
   interact :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity) -- TODO: generalize pairs to interaction event types
                                                                         --        e.g. player-item, player-teleport, killbox-players
   interact swap = \case
+    -- TODO: filter interactions, maybe name them: pairs, teleport
+    -- Interact only if a player A <> teleport && player B <> killbox
+    (EPlayer p,EKillbox a)  -> (,) <$> update EPlayer p (playerDie time) <*> update EKillbox a (return ())
+    -- HINT: teleport targets should be passed here
+    --        where to collect those?
+    (EPlayer p,ETeleport a) -> (,) <$> update EPlayer p (pPosition .= head [t^.ttPosition | ETarget t <- ents, t^.ttTargetName == a^.tTarget]) -- TODO: lookup target, get the position + implement telefrag (killbox)
+                                   <*> update ETeleport a (return ())
+
 
     (EPlayer p,EHealth a) -> do -- collects newly create entities also handles random seed
                               let c = p^.pHealth >= 200
@@ -331,12 +362,7 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
     (EPlayer p,ELava a)   -> (,) <$> update EPlayer p (do {tick <- oncePerSec; when tick (pHealth -= a^.lDamage)})
                                  <*> update ELava a (return ())
 
-    -- HINT: teleport targets should be passed here
-    --        where to collect those?
-    (EPlayer p,ETeleport a) -> (,) <$> update EPlayer p (pPosition .= (0,0)) -- TODO: lookup target, get the position + implement telefrag (killbox)
-                                   <*> update ETeleport a (return ())
-
-    (EBullet a,b)         -> (,Just b) <$> update EBullet a die
+    (EBullet a,b)         -> (,Just b) <$> update EBullet a die -- bug in this case: (EBullet,EPlayer)
 
     (a,b) | swap -> interact False (b,a)
           | otherwise -> return (Just a,Just b)
@@ -406,7 +432,9 @@ stepPlayer input@Input{..} = do
   pHealth %= min 200
   -- death
   health <- use pHealth
-  unless (health > 0) $ do
+  unless (health > 0) $ playerDie time
+
+playerDie time = do
     [x1,y1,x2,y2] <- replicateM 4 $ getRandomR (-50,50)
     pos <- use pPosition
     ammo <- use pAmmo
@@ -511,6 +539,7 @@ renderFun w = Pictures $ ents ++ vis where
     ELava a     -> Translate x y $ text "Lava" $ Color orange $ Circle 50 where (x,y) = a^.lPosition
     ETeleport a -> Translate x y $ text "Teleport" $ Color magenta $ Circle 20 where (x,y) = a^.tPosition
     ETarget a   -> Translate x y $ text "Target" Blank where (x,y) = a^.ttPosition
+    EKillbox a  -> Translate x y $ Color violet $ Circle 20 where (x,y) = a^.kPosition
     _ -> Blank
 
   text s p = Pictures [Scale 0.1 0.1 $ Text s, p]
@@ -530,6 +559,7 @@ emptyWorld = World
   , ELava     (Lava (-200,-100) 10)
   , ETeleport (Teleport (-200,100) "t1")
   , ETarget   (Target (300,-100) "t1")
+  , EKillbox  (Killbox (300,-100))
   ] [] emptyInput (pureMT 123456789)
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
