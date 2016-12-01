@@ -44,7 +44,7 @@ import Debug.Trace
         idea: emit frags on deathmatch kills, containing the necessary info
               emit flag scores / events
           question: does this break state locality? (this is ad hoc, but it's ok to me)
-    * teleport (target support)
+    done - teleport (target support)
     * teleport telefrag with killbox
     jump pad
     door
@@ -207,7 +207,8 @@ data Target
 
 data Killbox
   = Killbox
-  { _kPosition  :: Vec2
+  { _kPosition    :: Vec2
+  , _kTargetName  :: String
   } deriving Show
 
 data Entity
@@ -267,9 +268,14 @@ collide ents = x where
     EKillbox a  -> Just (a^.kPosition, 20)
     _ -> Nothing
 
-type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a -- entity update monad (mutable state + collect new entities/visuals)
-type VM s a = ReaderT s (StateT s (MaybeT (WriterT ([Visual]) (Rand PureMT)))) a -- visual item update monad + collect new visual items
-type CM a = WriterT ([Entity],[Visual]) (Rand PureMT) a -- monad for collect new entites or visuals
+-- entity update monad (mutable state + collect new entities/visuals)
+type EM s a = ReaderT s (StateT s (MaybeT (WriterT ([Entity],[Visual]) (Rand PureMT)))) a
+
+-- visual item update monad + collect new visual items
+type VM s a = ReaderT s (StateT s (MaybeT (WriterT ([Visual]) (Rand PureMT)))) a
+
+-- monad for collect new entites or visuals
+type CM a = WriterT ([Entity],[Visual]) (Rand PureMT) a
 
 die = fail "die"
 
@@ -314,8 +320,18 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
   collisions = collide ents
 
   interactions :: [(Int,Int)] -> [Interaction]
-  interactions _ = []
+  interactions _ = [] -- TODO
+    {-
+      the problem is that potentially we can add any kind of interaction rules, where anything can be interact with other objects
+      in case of teleport and killbox the teleport is entangled with the teleport-target/killbox in position
+      DESIGN CHOICES:
+        #1 - preprocess and cache collisions, then construct interactions, where entangled items can refer to each other (references/ids)
+        #2 - collision is checked during the interaction checking
+      HINT:
+        teleport is also connected to killbox and target
+    -}
 
+  -- step game and get next state
   ((nextEnts,(newEnts,newVisuals)),randGen') = collect randGen $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
           (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
@@ -559,7 +575,7 @@ emptyWorld = World
   , ELava     (Lava (-200,-100) 10)
   , ETeleport (Teleport (-200,100) "t1")
   , ETarget   (Target (300,-100) "t1")
-  , EKillbox  (Killbox (300,-100))
+--  , EKillbox  (Killbox (300,-100) "t1")
   ] [] emptyInput (pureMT 123456789)
 
 main = play (InWindow "Lens MiniGame" (800, 600) (10, 10)) white 100 emptyWorld renderFun inputFun stepFun
