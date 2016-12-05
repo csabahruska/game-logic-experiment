@@ -6,9 +6,6 @@ import Lens.Micro.Platform
 
 type Vec2 = Vector
 
---_x = _1
---_y = _2
-
 -- entities for game logic
 
 data Player

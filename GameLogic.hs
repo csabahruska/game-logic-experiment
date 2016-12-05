@@ -93,7 +93,7 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
   -- step game and get next state
   ((nextEnts,(newEnts,newVisuals)),randGen') = collect randGen $ do
     let go entV (i1,i2) = case (entV ! i1, entV ! i2) of
-          (Just e1, Just e2) -> interact True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
+          (Just e1, Just e2) -> interact_ True (e1,e2) >>= \(e1',e2') -> return (entV // [(i1,e1'),(i2,e2')])
           _ -> return entV
     v <- foldM go entityVector collisions -- handle interactions
     mapM (maybe (return Nothing) step) v  -- step each entity
@@ -105,9 +105,9 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
     PSpawn  a -> update PSpawn a $ stepSpawn time dtime
     e -> return $ Just e
 
-  interact :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity) -- TODO: generalize pairs to interaction event types
+  interact_ :: Bool -> (Entity,Entity) -> CM (Maybe Entity,Maybe Entity) -- TODO: generalize pairs to interaction event types
                                                                         --        e.g. player-item, player-teleport, killbox-players
-  interact swap = \case
+  interact_ swap = \case
     -- TODO: filter interactions, maybe name them: pairs, teleport
     -- Interact only if a player A <> teleport && player B <> killbox
     (EPlayer p,EKillbox a)  -> (,) <$> update EPlayer p (playerDie time) <*> update EKillbox a (return ())
@@ -139,7 +139,7 @@ updateEntities randGen input@Input{..} ents = (randGen',catMaybes (V.toList next
 
     (EBullet a,b)         -> (,Just b) <$> update EBullet a die -- bug in this case: (EBullet,EPlayer)
 
-    (a,b) | swap -> interact False (b,a)
+    (a,b) | swap -> interact_ False (b,a)
           | otherwise -> return (Just a,Just b)
 
   oncePerSec = do

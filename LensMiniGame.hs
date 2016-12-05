@@ -117,6 +117,7 @@ import GameLogic
 
 -----
 
+inputFun :: Event -> World -> World
 inputFun e w = w & wInput .~ i' where
   f Down = 300
   f Up = -300

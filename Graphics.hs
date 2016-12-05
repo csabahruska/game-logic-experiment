@@ -3,9 +3,6 @@ module Graphics where
 
 import Text.Printf
 import Graphics.Gloss
---import Graphics.Gloss.Interface.Pure.Game
---import Graphics.Gloss.Data.Vector
---import Graphics.Gloss.Geometry.Angle
 import Lens.Micro.Platform
 import Entities
 import Visuals
