@@ -8,6 +8,7 @@ import Entities
 import Visuals
 import World
 
+renderFun :: World -> Picture
 renderFun w = Pictures $ ents ++ vis where
   ents = flip map (w^.wEntities) $ \case
     EPlayer p -> let (x,y) = p^.pPosition
