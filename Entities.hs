@@ -1,6 +1,7 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, FlexibleInstances #-}
 module Entities where
 
+import qualified Graphics.Gloss.Data.Point.Arithmetic as P
 import Graphics.Gloss.Data.Vector
 import Lens.Micro.Platform
 
@@ -102,3 +103,14 @@ data Entity
   deriving Show
 
 concat <$> mapM makeLenses [''Player, ''Bullet, ''Weapon, ''Ammo, ''Armor, ''Spawn, ''Health, ''Lava, ''Teleport, ''Target, ''Killbox]
+
+-- workaround
+
+instance Num (Float, Float) where
+   (+) = (P.+)
+   (-) = (P.-)
+   (a1, b1) * (a2, b2) = (a1 * a2, b1 * b2)
+   negate = P.negate
+   abs (a, b) = (abs a, abs b)
+   signum (a, b) = (signum a, signum b)
+   fromInteger a = (fromInteger a, fromInteger a)
